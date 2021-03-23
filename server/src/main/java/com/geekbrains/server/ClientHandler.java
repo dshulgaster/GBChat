@@ -4,6 +4,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.Socket;
+import java.util.concurrent.ExecutorService;
 
 public class ClientHandler {
     private String nickname;
@@ -16,52 +17,106 @@ public class ClientHandler {
         return nickname;
     }
 
-    public ClientHandler(Server server, Socket socket) {
+    // Перекомпоновка: вынес для удобства часть кода в отдельные методы:
+    // waitAuthorization(Sever sever)
+    // waitMessageOrCommand(Server server, AuthService authService)
+    public ClientHandler(Server server, Socket socket, AuthService authService,
+                         ExecutorService executorService) {
         try {
             this.server = server;
             this.socket = socket;
             this.in = new DataInputStream(socket.getInputStream());
             this.out = new DataOutputStream(socket.getOutputStream());
-            new Thread(() -> {
+
+            executorService.submit(() -> {
                 try {
-                    while (true) {
-                        String msg = in.readUTF();
-                        // /auth login1 pass1
-                        if (msg.startsWith("/auth ")) {
-                            String[] tokens = msg.split("\\s");
-                            String nick = server.getAuthService().getNicknameByLoginAndPassword(tokens[1], tokens[2]);
-                            if (nick != null && !server.isNickBusy(nick)) {
-                                sendMsg("/authok " + nick);
-                                nickname = nick;
-                                server.subscribe(this);
-                                break;
-                            }
-                        }
-                    }
-                    while (true) {
-                        String msg = in.readUTF();
-                        if(msg.startsWith("/")) {
-                            if (msg.equals("/end")) {
-                                sendMsg("/end");
-                                break;
-                            }
-                            if(msg.startsWith("/w ")) {
-                                String[] tokens = msg.split("\\s", 3);
-                                server.privateMsg(this, tokens[1], tokens[2]);
-                            }
-                        } else {
-                            server.broadcastMsg(nickname + ": " + msg);
-                        }
-                    }
+                    waitAuthorization(server);
+                    waitMessageOrCommand(server, authService);
+
                 } catch (IOException e) {
                     e.printStackTrace();
                 } finally {
-                    ClientHandler.this.disconnect();
+                    disconnect();
                 }
-            }).start();
+
+            });
+
+//            new Thread(() -> {
+//                try {
+//                    waitAuthorization(server);
+//                    waitMessageOrCommand(server, socket);
+//
+//                } catch (IOException e) {
+//                    e.printStackTrace();
+//                } finally {
+//                    ClientHandler.this.disconnect();
+//                }
+//            }).start();
+
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    private void waitMessageOrCommand(Server server, AuthService authService) throws IOException {
+        while (true) {
+            String msg = in.readUTF();
+            if(msg.startsWith("/")) {
+                if (msg.equals("/end")) {
+                    sendMsg("/end");
+                    break;
+                }
+                if(msg.startsWith("/w ")) {
+                    String[] tokens = msg.split("\\s", 3);
+                    server.privateMsg(this, tokens[1], tokens[2]);
+                }
+            } else {
+                server.broadcastMsg(nickname + ": " + msg);
+            }
+        }
+    }
+
+    private void waitAuthorization(Server server) throws IOException {
+        while (true) {
+            String msg = in.readUTF();
+            // /auth login1 pass1
+            if (msg.startsWith("/auth ")) {
+                String[] tokens = msg.split("\\s");
+                String nick = server.getAuthService().getNicknameByLoginAndPassword(tokens[1], tokens[2]);
+                if (nick != null && !server.isNickBusy(nick)) {
+                    sendMsg("/authok " + nick);
+                    nickname = nick;
+                    server.subscribe(this);
+                    break;
+                }
+            }
+        }
+    }
+
+    private void checkPrivateMessageCommand(Server server, String msg) {
+        if (msg.startsWith("/w ")) {
+            String[] tokens = msg.split("\\s", 3);
+            server.privateMsg(this, tokens[1], tokens[2]);
+        }
+    }
+
+    private void checkUpdateNicknameCommand(Server server, AuthService authService, String msg) {
+        if (msg.startsWith("/upNick ")) {
+            String[] tokens = msg.split("\\s", 2);
+
+            if (tokens.length == 2 && !tokens[1].trim().equals("")) {
+                String newNickname = tokens[1].trim();
+
+                if (!server.isNickBusy(newNickname) && authService.updateNickName(getNickname(), newNickname)) {
+                    String message = String.format("Никнейм пользователя \"%s\" был заменен на \"%s \"",
+                            getNickname(), newNickname);
+                    server.broadcastMsg(message);
+                    nickname = newNickname;
+                    server.broadcastClientsList();
+                }
+            }
+        }
+
     }
 
     public void sendMsg(String msg) {
