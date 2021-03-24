@@ -41,18 +41,6 @@ public class ClientHandler {
 
             });
 
-//            new Thread(() -> {
-//                try {
-//                    waitAuthorization(server);
-//                    waitMessageOrCommand(server, socket);
-//
-//                } catch (IOException e) {
-//                    e.printStackTrace();
-//                } finally {
-//                    ClientHandler.this.disconnect();
-//                }
-//            }).start();
-
         } catch (IOException e) {
             e.printStackTrace();
         }
